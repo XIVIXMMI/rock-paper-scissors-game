@@ -1,13 +1,26 @@
 package client;
 
+import utils.Protocol;
+
 import javax.swing.*;
 import java.awt.*;
+import java.io.*;
+import java.net.Socket;
 
 /**
  * GameClientUI - GUI Client for Rock Paper Scissors Game
- * Day 5: Basic Swing GUI implementation
+ * Day 6: Socket integration with GUI
  */
 public class GameClientUI extends JFrame {
+    // Server connection settings
+    private static final String SERVER_HOST = "localhost";
+    private static final int SERVER_PORT = 12345;
+
+    // Network components
+    private Socket socket;
+    private BufferedReader in;
+    private PrintWriter out;
+
     // UI Components
     private JTextField nameField;
     private JButton joinBtn;
@@ -20,6 +33,7 @@ public class GameClientUI extends JFrame {
     private int wins = 0;
     private int losses = 0;
     private int draws = 0;
+    private boolean isConnected = false;
 
     public GameClientUI() {
         initializeUI();
@@ -35,6 +49,14 @@ public class GameClientUI extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setResizable(false);
         setLocationRelativeTo(null); // Center window
+
+        // Add window listener to cleanup on close
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent windowEvent) {
+                disconnect();
+            }
+        });
 
         // Main panel with BorderLayout
         JPanel mainPanel = new JPanel();
@@ -151,7 +173,7 @@ public class GameClientUI extends JFrame {
     }
 
     /**
-     * Handle Join button click (placeholder for Day 6)
+     * Handle Join button click - Connect to server
      */
     private void handleJoinButton() {
         String name = nameField.getText().trim();
@@ -166,41 +188,68 @@ public class GameClientUI extends JFrame {
             return;
         }
 
-        // For Day 5 testing: just show that button works
+        // Disable input while connecting
         statusLabel.setText("Connecting to server...");
         joinBtn.setEnabled(false);
         nameField.setEnabled(false);
 
-        // Simulate connection (will implement real connection in Day 6)
-        System.out.println("Join button clicked! Name: " + name);
+        // Connect to server in a background thread to avoid freezing UI
+        new Thread(() -> {
+            try {
+                // Connect to server
+                socket = new Socket(SERVER_HOST, SERVER_PORT);
+                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                out = new PrintWriter(socket.getOutputStream(), true);
+                isConnected = true;
 
-        // For testing, enable game buttons after a short delay
-        Timer timer = new Timer(1000, e -> {
-            statusLabel.setText("Connected! (Demo mode - Day 5)");
-            enableGameButtons();
-        });
-        timer.setRepeats(false);
-        timer.start();
+                System.out.println("Connected to server at " + SERVER_HOST + ":" + SERVER_PORT);
+
+                // Send CONNECT message with player name
+                sendMessage(Protocol.createMessage(Protocol.CONNECT, name));
+
+                // Start thread to listen for server messages
+                startMessageListener();
+
+            } catch (IOException e) {
+                isConnected = false;
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(
+                        this,
+                        "Could not connect to server!\nMake sure the server is running on " + SERVER_HOST + ":" + SERVER_PORT,
+                        "Connection Error",
+                        JOptionPane.ERROR_MESSAGE
+                    );
+                    statusLabel.setText("Connection failed. Try again.");
+                    joinBtn.setEnabled(true);
+                    nameField.setEnabled(true);
+                });
+                System.err.println("Connection error: " + e.getMessage());
+            }
+        }).start();
     }
 
     /**
-     * Handle game choice button click (placeholder for Day 6)
+     * Handle game choice button click - Send choice to server
      */
     private void handleChoice(String choice) {
+        if (!isConnected) {
+            JOptionPane.showMessageDialog(
+                this,
+                "Not connected to server!",
+                "Error",
+                JOptionPane.ERROR_MESSAGE
+            );
+            return;
+        }
+
         System.out.println("Choice made: " + choice);
 
-        // For Day 5 testing: just show feedback
-        statusLabel.setText("You chose " + choice + " (Demo mode)");
-        disableGameButtons();
+        // Send choice to server
+        sendMessage(Protocol.createMessage(Protocol.CHOICE, choice));
 
-        // Simulate result after delay
-        Timer timer = new Timer(1500, e -> {
-            resultLabel.setText("Result: Demo Mode - Day 5");
-            statusLabel.setText("Ready for next round");
-            enableGameButtons();
-        });
-        timer.setRepeats(false);
-        timer.start();
+        // Update status and disable buttons
+        updateStatus("You chose " + choice + ". Waiting for opponent...");
+        disableGameButtons();
     }
 
     /**
@@ -258,6 +307,143 @@ public class GameClientUI extends JFrame {
     }
 
     /**
+     * Send a message to the server
+     */
+    private void sendMessage(String message) {
+        if (out != null && isConnected) {
+            out.println(message);
+            System.out.println("Sent to server: " + message);
+        }
+    }
+
+    /**
+     * Start a thread to listen for messages from the server
+     */
+    private void startMessageListener() {
+        new Thread(() -> {
+            try {
+                String message;
+                while (isConnected && (message = in.readLine()) != null) {
+                    System.out.println("Received from server: " + message);
+                    final String serverMessage = message;
+
+                    // Update GUI on Event Dispatch Thread
+                    SwingUtilities.invokeLater(() -> handleServerMessage(serverMessage));
+                }
+            } catch (IOException e) {
+                if (isConnected) {
+                    System.err.println("Error reading from server: " + e.getMessage());
+                    SwingUtilities.invokeLater(() -> {
+                        updateStatus("Connection lost!");
+                        JOptionPane.showMessageDialog(
+                            this,
+                            "Lost connection to server!",
+                            "Connection Error",
+                            JOptionPane.ERROR_MESSAGE
+                        );
+                    });
+                }
+            } finally {
+                disconnect();
+            }
+        }).start();
+    }
+
+    /**
+     * Handle messages received from the server
+     */
+    private void handleServerMessage(String message) {
+        String type = Protocol.parseType(message);
+        String content = Protocol.parseContent(message);
+
+        switch (type) {
+            case Protocol.WELCOME:
+                updateStatus(content);
+                break;
+
+            case Protocol.WAITING:
+                updateStatus(content);
+                disableGameButtons();
+                break;
+
+            case Protocol.OPPONENT_FOUND:
+                updateStatus(content);
+                updateResult("Game starting!");
+                enableGameButtons();
+                break;
+
+            case Protocol.RESULT:
+                handleGameResult(content);
+                break;
+
+            case Protocol.OPPONENT_LEFT:
+                updateStatus(content);
+                updateResult("Opponent disconnected");
+                disableGameButtons();
+                break;
+
+            case Protocol.ERROR:
+                updateStatus("Error: " + content);
+                JOptionPane.showMessageDialog(
+                    this,
+                    content,
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE
+                );
+                break;
+
+            default:
+                System.out.println("Unknown message type: " + type);
+        }
+    }
+
+    /**
+     * Handle game result message from server
+     * Format: "WIN:You chose ROCK, Opponent chose SCISSORS"
+     */
+    private void handleGameResult(String content) {
+        // Parse the result
+        String[] parts = content.split(":", 2);
+        if (parts.length < 2) {
+            updateResult(content);
+            return;
+        }
+
+        String outcome = parts[0]; // WIN, LOSE, or DRAW
+        String details = parts[1];  // Details about choices
+
+        // Update result label
+        updateResult(outcome + " - " + details);
+
+        // Update score
+        updateScore(outcome);
+
+        // Re-enable buttons for next round
+        Timer timer = new Timer(2000, e -> {
+            enableGameButtons();
+            updateStatus("Ready for next round!");
+        });
+        timer.setRepeats(false);
+        timer.start();
+    }
+
+    /**
+     * Disconnect from the server
+     */
+    private void disconnect() {
+        isConnected = false;
+        try {
+            if (socket != null && !socket.isClosed()) {
+                sendMessage(Protocol.createMessage(Protocol.DISCONNECT, ""));
+                socket.close();
+            }
+            System.out.println("Disconnected from server");
+        } catch (IOException e) {
+            System.err.println("Error disconnecting: " + e.getMessage());
+        }
+    }
+
+    /**
      * Main method to launch the GUI
      */
     public static void main(String[] args) {
@@ -266,8 +452,8 @@ public class GameClientUI extends JFrame {
             GameClientUI gui = new GameClientUI();
             gui.setVisible(true);
             System.out.println("=== Rock Paper Scissors GUI Client ===");
-            System.out.println("Day 5: GUI components initialized");
-            System.out.println("Window displayed successfully!");
+            System.out.println("Day 6: Socket integration complete");
+            System.out.println("Client ready! Enter your name and click Join to connect to " + SERVER_HOST + ":" + SERVER_PORT);
         });
     }
 }
