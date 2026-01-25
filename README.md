@@ -86,16 +86,16 @@ java -version
 3. Main class: client.GameClientUI
 4. Module: rock-paper-scissors-game
 5. JRE: 21
-6. ✅ IMPORTANT: Check "Allow multiple instances"
+6. IMPORTANT: Check "Allow multiple instances"
 7. Click "OK"
 ```
 
 #### 3. Run the Game
 
 ```
-1. Start Server: Select "GameServer" from dropdown → Click Run (▶️)
-2. Start Client 1: Select "GameClientUI" from dropdown → Click Run (▶️)
-3. Start Client 2: Click Run (▶️) again (multiple instances enabled)
+1. Start Server: Select "GameServer" from dropdown → Click Run 
+2. Start Client 1: Select "GameClientUI" from dropdown → Click Run 
+3. Start Client 2: Click Run again (multiple instances enabled)
 ```
 
 ### Option 2: Using Command Line
